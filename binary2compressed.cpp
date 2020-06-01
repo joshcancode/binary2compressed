@@ -84,12 +84,10 @@ void stb::write(std::uint8_t v) noexcept
 
 void stb::out(std::uint32_t v) noexcept
 {
-    do {
-        if (stb__out)
-            *stb__out++ = static_cast<std::uint8_t>(v);
-        else
-            write(static_cast<std::uint8_t>(v));
-    } while (0);
+    if (stb__out)
+        *stb__out++ = static_cast<std::uint8_t>(v);
+    else
+        write(static_cast<std::uint8_t>(v));
 }
 
 void stb::shiftOut(std::uint32_t v, int level) noexcept
