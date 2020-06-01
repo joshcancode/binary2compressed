@@ -16,7 +16,7 @@
 
 namespace stb
 {
-    std::uint32_t adler32(std::uint32_t adler32, std::uint8_t* buffer, std::uint32_t bufferLength) noexcept;
+    void adler32(std::uint8_t* buffer, std::uint32_t bufferLength) noexcept;
     std::uint32_t compress(std::uint8_t* out, std::uint8_t* input, std::uint32_t length) noexcept;
     int compressChunk(std::uint8_t* start, std::uint8_t* end, int length, int* pendingLiterals, std::uint8_t** cHash, std::uint32_t mask) noexcept;
     void compressInner(std::uint8_t* input, std::uint32_t length) noexcept;
@@ -25,15 +25,19 @@ namespace stb
     void write(std::uint8_t v) noexcept;
 }
 
+static int stb__window = 0x40000; // 256K
+static unsigned int stb__running_adler;
+static std::uint32_t stb__hashsize = 32768;
+
 // ---------- Compressor ---------- //
 
-std::uint32_t stb::adler32(std::uint32_t adler32, std::uint8_t* buffer, std::uint32_t bufferLength) noexcept
+void stb::adler32(std::uint8_t* buffer, std::uint32_t bufferLength) noexcept
 {
     constexpr int adlerBase = 65521; // Largest prime smaller than 65536
 
     std::uint32_t blockLength = bufferLength % 5552;
-    std::uint32_t s1 = adler32 & 0xFFFF;
-    std::uint32_t s2 = adler32 >> 16;
+    std::uint32_t s1 = stb__running_adler & 0xFFFF;
+    std::uint32_t s2 = stb__running_adler >> 16;
 
     std::uint32_t i = 0;
 
@@ -58,7 +62,7 @@ std::uint32_t stb::adler32(std::uint32_t adler32, std::uint8_t* buffer, std::uin
         blockLength = 5552;
     }
 
-    return (s2 << 16) + s1;
+    stb__running_adler = (s2 << 16) + s1;
 }
 
 static std::uint32_t matchLength(std::uint8_t* m1, std::uint8_t* m2, std::uint32_t maxLength) noexcept
@@ -110,13 +114,14 @@ static void outLiterals(std::uint8_t* in, int numlit)
         numlit -= 65536;
     }
 
-    if (numlit == 0);
-    else if (numlit <= 32)
-        stb::out(0x000020 + numlit - 1);
-    else if (numlit <= 2048)
-        stb::shiftOut(0x000800 + numlit - 1);
-    else
-        stb::shiftOut(0x070000 + numlit - 1, 1);
+    if (numlit != 0) {
+        if (numlit <= 32)
+            stb::out(0x000020 + numlit - 1);
+        else if (numlit <= 2048)
+            stb::shiftOut(0x000800 + numlit - 1);
+        else
+            stb::shiftOut(0x070000 + numlit - 1, 1);
+    }
 
     if (stb__out) {
         std::memcpy(stb__out, in, numlit);
@@ -136,10 +141,6 @@ static int stb_not_crap(int best, int dist)
 #define stb__hc(q,h,c)      (((h) << 7) + ((h) >> 25) + q[c])
 #define stb__hc2(q,h,c,d)   (((h) << 14) + ((h) >> 18) + (q[c] << 7) + q[d])
 #define stb__hc3(q,c,d,e)   ((q[c] << 14) + (q[d] << 7) + q[e])
-
-static int stb__window = 0x40000; // 256K
-static unsigned int stb__running_adler;
-static std::uint32_t stb__hashsize = 32768;
 
 int stb::compressChunk(std::uint8_t* start, std::uint8_t* end, int length, int* pendingLiterals, std::uint8_t** cHash, std::uint32_t mask) noexcept
 {
@@ -194,8 +195,8 @@ int stb::compressChunk(std::uint8_t* start, std::uint8_t* end, int length, int* 
         if (best > 2)
             assert(dist > 0);
 
-        // see if our best match qualifies
-        if (best < 3) // fast path literals
+        // See if our best match qualifies
+        if (best < 3)
             ++q;
         else if (best > 2 && best <= 0x80 && dist <= 0x100) {
             outLiterals(lit_start, q - lit_start); lit_start = (q += best);
@@ -235,14 +236,15 @@ int stb::compressChunk(std::uint8_t* start, std::uint8_t* end, int length, int* 
             ++q;
     }
 
-    // if we didn't get all the way, add the rest to literals
+    // If we didn't get all the way, add the rest to literals
     if (q - start < length)
         q = start + length;
 
-    // the literals are everything from lit_start to q
+    // Literals are everything from lit_start to q
     *pendingLiterals = (q - lit_start);
 
-    stb__running_adler = stb::adler32(stb__running_adler, start, q - start);
+    stb::adler32(start, q - start);
+
     return q - start;
 }
 
