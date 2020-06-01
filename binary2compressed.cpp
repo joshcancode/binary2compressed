@@ -19,7 +19,7 @@ namespace stb
     std::uint32_t adler32(std::uint32_t adler32, std::uint8_t* buffer, std::uint32_t bufferLength) noexcept;
     std::uint32_t compress(std::uint8_t* out, std::uint8_t* input, std::uint32_t length) noexcept;
     int compressChunk(std::uint8_t* start, std::uint8_t* end, int length, int* pendingLiterals, std::uint8_t** cHash, std::uint32_t mask) noexcept;
-    int compressInner(std::uint8_t* input, std::uint32_t length) noexcept;
+    void compressInner(std::uint8_t* input, std::uint32_t length) noexcept;
     void out(std::uint32_t v) noexcept;
     void shiftOut(std::uint32_t v, int level = 0) noexcept;
     void write(std::uint8_t v) noexcept;
@@ -248,14 +248,14 @@ int stb::compressChunk(std::uint8_t* start, std::uint8_t* end, int length, int* 
     return q - start;
 }
 
-int stb::compressInner(std::uint8_t* input, std::uint32_t length) noexcept
+void stb::compressInner(std::uint8_t* input, std::uint32_t length) noexcept
 {
-    std::uint8_t** chash = static_cast<std::uint8_t**>(std::malloc(stb__hashsize * sizeof(std::uint8_t*)));
-    if (chash == NULL)
-        return 0;
+    std::uint8_t** cHash = static_cast<std::uint8_t**>(std::malloc(stb__hashsize * sizeof(std::uint8_t*)));
+    if (!cHash)
+        return;
 
     for (std::uint32_t i = 0; i < stb__hashsize; ++i)
-        chash[i] = NULL;
+        cHash[i] = 0;
 
     // stream signature
     stb::out(0x57);
@@ -269,17 +269,15 @@ int stb::compressInner(std::uint8_t* input, std::uint32_t length) noexcept
     stb__running_adler = 1;
 
     int literals = 0;
-    int hashLength = compressChunk(input, input + length, length, &literals, chash, stb__hashsize - 1);
+    int hashLength = compressChunk(input, input + length, length, &literals, cHash, stb__hashsize - 1);
     assert(hashLength == length);
 
     outLiterals(input + length - literals, literals);
 
-    std::free(chash);
+    std::free(cHash);
 
     stb::shiftOut(0x05fa); // end opcode
     stb::shiftOut(stb__running_adler, 2);
-
-    return 1;
 }
 
 std::uint32_t stb::compress(std::uint8_t* out, std::uint8_t* input, std::uint32_t length) noexcept
