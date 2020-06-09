@@ -25,7 +25,7 @@ namespace stb
 }
 
 constexpr int hashSize = 32768;
-constexpr int stbWindow = 0x40000; // 256K
+constexpr int stbWindow = 0x40000;
 
 std::uint32_t stb::runningAdler;
 
@@ -312,14 +312,14 @@ char encode85Byte(unsigned int x)
     return x >= '\\' ? x + 1 : x;
 }
 
-#include <string.h>
-
 bool binaryToCompressed(const char* fileName, const char* symbol, bool useBase85Encoding, bool useCompression)
 {
     // Read the font file using rb, since this is not a text file
     FILE* stream = nullptr;
     if (const errno_t error = fopen_s(&stream, fileName, "rb") != 0) {
-        fprintf_s(stderr, "Cannot open file '%s': %s\n", fileName, std::strerror(error));
+        char buffer[100];
+        strerror_s(buffer, 100, error);
+        fprintf_s(stderr, "Cannot open file '%s': %s\n", fileName, buffer);
         return false;
     }
 
@@ -404,7 +404,7 @@ bool binaryToCompressed(const char* fileName, const char* symbol, bool useBase85
 int main(int argc, char** argv)
 {
     if (argc < 3) {
-        std::printf("Syntax: %s [-base85] [-nocompress] <inputfile> <symbolname>\n", argv[0]);
+        fprintf_s(stdout, "Syntax: %s [-base85] [-nocompress] <inputfile> <symbolname>\n", argv[0]);
         return EXIT_SUCCESS;
     }
 
@@ -418,7 +418,7 @@ int main(int argc, char** argv)
         else if (std::strcmp(argv[arg], "-nocompress") == 0)
             compression = false;
         else {
-            std::fprintf(stderr, "Unknown argument: '%s'\n", argv[arg]);
+            fprintf_s(stderr, "Unknown argument: '%s'\n", argv[arg]);
             return EXIT_FAILURE;
         }
 
@@ -428,6 +428,6 @@ int main(int argc, char** argv)
     if (binaryToCompressed(argv[arg], argv[arg + 1], base85Encoding, compression))
         return EXIT_SUCCESS;
 
-    std::fprintf(stderr, "Error opening or reading file: '%s'\n", argv[arg]);
+    fprintf_s(stderr, "Error opening or reading file: '%s'\n", argv[arg]);
     return EXIT_FAILURE;
 }
