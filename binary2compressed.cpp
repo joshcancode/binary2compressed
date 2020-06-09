@@ -6,11 +6,8 @@
 // Usage example:
 //   # binary_to_compressed_c.exe myfont.ttf MyFont > myfont.cpp
 
-#define _CRT_SECURE_NO_WARNINGS
-
 #include <assert.h>
 #include <cstdint>
-#include <errno.h>
 #include <stdio.h>
 #include <string>
 
@@ -23,11 +20,14 @@ namespace stb
     void out(std::uint32_t v) noexcept;
     void shiftOut(std::uint32_t v, int level = 0) noexcept;
     void write(std::uint8_t v) noexcept;
+
+    extern std::uint32_t runningAdler;
 }
 
-static int stb__window = 0x40000; // 256K
-static unsigned int stb__running_adler;
-static std::uint32_t stb__hashsize = 32768;
+constexpr int hashSize = 32768;
+constexpr int stbWindow = 0x40000; // 256K
+
+std::uint32_t stb::runningAdler;
 
 // ---------- Compressor ---------- //
 
@@ -36,8 +36,8 @@ void stb::adler32(std::uint8_t* buffer, std::uint32_t bufferLength) noexcept
     constexpr int adlerBase = 65521; // Largest prime smaller than 65536
 
     std::uint32_t blockLength = bufferLength % 5552;
-    std::uint32_t s1 = stb__running_adler & 0xFFFF;
-    std::uint32_t s2 = stb__running_adler >> 16;
+    std::uint32_t s1 = runningAdler & 0xFFFF;
+    std::uint32_t s2 = runningAdler >> 16;
 
     std::uint32_t i = 0;
 
@@ -62,7 +62,7 @@ void stb::adler32(std::uint8_t* buffer, std::uint32_t bufferLength) noexcept
         blockLength = 5552;
     }
 
-    stb__running_adler = (s2 << 16) + s1;
+    runningAdler = (s2 << 16) + s1;
 }
 
 static std::uint32_t matchLength(std::uint8_t* m1, std::uint8_t* m2, std::uint32_t maxLength) noexcept
@@ -144,12 +144,12 @@ static int stb_not_crap(int best, int dist)
 
 int stb::compressChunk(std::uint8_t* start, std::uint8_t* end, int length, int* pendingLiterals, std::uint8_t** cHash, std::uint32_t mask) noexcept
 {
-    auto scramble = [&](unsigned int h) -> int {
+    auto scramble = [&mask](unsigned int h) -> int {
         return (h + (h >> 16) & mask);
     };
 
-    int window = stb__window;
-    std::uint32_t match_max;
+    int window = stbWindow;
+    std::uint32_t maxLength;
     std::uint8_t* lit_start = start - *pendingLiterals;
     std::uint8_t* q = start;
 
@@ -162,31 +162,47 @@ int stb::compressChunk(std::uint8_t* start, std::uint8_t* end, int length, int* 
         std::uint8_t* t;
         int best = 2, dist = 0;
 
-        if (q + 65536 > end)
-            match_max = end - q;
-        else
-            match_max = 65536;
+        maxLength = (q + 65536 > end) ? end - q : 65536;
 
 #define stb__nc(b,d)  ((d) <= window && ((b) > 9 || stb_not_crap(b,d)))
 
-#define STB__TRY(t,p)  /* avoid retrying a match we already tried */ \
-    if (p ? dist != q-t : 1)                             \
-    if ((m = matchLength(t, q, match_max)) > best)     \
-    if (stb__nc(m,q-(t)))                                \
-    best = m, dist = q - (t)
+        // Avoid retrying a match we already tried
+        #define STB__TRY(t, compareDist) \
+            if (compareDist ? dist != q - t : true) \
+            if ((m = matchLength(t, q, maxLength)) > best)     \
+            if (stb__nc(m,q-(t)))                                \
+            best = m, dist = q - (t)
 
         // rather than search for all matches, only try 4 candidate locations,
         // chosen based on 4 different hash functions of different lengths.
         // this strategy is inspired by LZO; hashing is unrolled here using the
         // 'hc' macro
-        h = stb__hc3(q, 0, 1, 2); h1 = scramble(h);
-        t = cHash[h1]; if (t) STB__TRY(t, 0);
-        h = stb__hc2(q, h, 3, 4); h2 = scramble(h);
-        h = stb__hc2(q, h, 5, 6);        t = cHash[h2]; if (t) STB__TRY(t, 1);
-        h = stb__hc2(q, h, 7, 8); h3 = scramble(h);
-        h = stb__hc2(q, h, 9, 10);        t = cHash[h3]; if (t) STB__TRY(t, 1);
-        h = stb__hc2(q, h, 11, 12); h4 = scramble(h);
-        t = cHash[h4]; if (t) STB__TRY(t, 1);
+        h = stb__hc3(q, 0, 1, 2);
+        h1 = scramble(h);
+        t = cHash[h1];
+        if (t) STB__TRY(t, false);
+        h = stb__hc2(q, h, 3, 4);
+        h2 = scramble(h);
+        h = stb__hc2(q, h, 5, 6);
+        t = cHash[h2];
+
+        if (t)
+            STB__TRY(t, true);
+
+        h = stb__hc2(q, h, 7, 8);
+        h3 = scramble(h);
+        h = stb__hc2(q, h, 9, 10);
+        t = cHash[h3];
+
+        if (t)
+            STB__TRY(t, true);
+
+        h = stb__hc2(q, h, 11, 12);
+        h4 = scramble(h);
+        t = cHash[h4];
+        
+        if (t)
+            STB__TRY(t, true);
 
         // because we use a shared hash table, can only update it
         // _after_ we've probed all of them
@@ -250,11 +266,11 @@ int stb::compressChunk(std::uint8_t* start, std::uint8_t* end, int length, int* 
 
 void stb::compressInner(std::uint8_t* input, std::uint32_t length) noexcept
 {
-    std::uint8_t** cHash = static_cast<std::uint8_t**>(std::malloc(stb__hashsize * sizeof(std::uint8_t*)));
+    std::uint8_t** cHash = static_cast<std::uint8_t**>(std::malloc(hashSize * 4)); // Multiply by the size of a pointer
     if (!cHash)
         return;
 
-    for (std::uint32_t i = 0; i < stb__hashsize; ++i)
+    for (std::uint32_t i = 0; i < hashSize; ++i)
         cHash[i] = 0;
 
     // stream signature
@@ -264,12 +280,12 @@ void stb::compressInner(std::uint8_t* input, std::uint32_t length) noexcept
 
     stb::shiftOut(0, 2); // 64-bit length requires 32-bit leading 0
     stb::shiftOut(length, 2);
-    stb::shiftOut(stb__window, 2);
+    stb::shiftOut(stbWindow, 2);
 
-    stb__running_adler = 1;
+    runningAdler = 1;
 
     int literals = 0;
-    int hashLength = compressChunk(input, input + length, length, &literals, cHash, stb__hashsize - 1);
+    int hashLength = compressChunk(input, input + length, length, &literals, cHash, hashSize - 1);
     assert(hashLength == length);
 
     outLiterals(input + length - literals, literals);
@@ -277,7 +293,7 @@ void stb::compressInner(std::uint8_t* input, std::uint32_t length) noexcept
     std::free(cHash);
 
     stb::shiftOut(0x05fa); // end opcode
-    stb::shiftOut(stb__running_adler, 2);
+    stb::shiftOut(runningAdler, 2);
 }
 
 std::uint32_t stb::compress(std::uint8_t* out, std::uint8_t* input, std::uint32_t length) noexcept
@@ -296,12 +312,14 @@ char encode85Byte(unsigned int x)
     return x >= '\\' ? x + 1 : x;
 }
 
+#include <string.h>
+
 bool binaryToCompressed(const char* fileName, const char* symbol, bool useBase85Encoding, bool useCompression)
 {
     // Read the font file using rb, since this is not a text file
-    FILE* stream = std::fopen(fileName, "rb");
-    if (!stream) {
-        std::perror("An error has occured");
+    FILE* stream = nullptr;
+    if (const errno_t error = fopen_s(&stream, fileName, "rb") != 0) {
+        fprintf_s(stderr, "Cannot open file '%s': %s\n", fileName, std::strerror(error));
         return false;
     }
 
@@ -359,7 +377,7 @@ bool binaryToCompressed(const char* fileName, const char* symbol, bool useBase85
     }
     else {
         std::fprintf(out, "constexpr unsigned int %s%sSize = %d;\n", symbol, nameSuffix, compressedSize);
-        std::fprintf(out, "constexpr unsigned int %s%sData[%d / 4] = {\n\t", symbol, nameSuffix, ((compressedSize + 3) / 4) * 4);
+        std::fprintf(out, "constexpr unsigned int %s%sData[%d / 4] = {", symbol, nameSuffix, ((compressedSize + 3) / 4) * 4);
 
         // The number of columns per line
         constexpr int columns = 12;
